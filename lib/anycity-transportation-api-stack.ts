@@ -5,6 +5,8 @@ import * as rds from 'aws-cdk-lib/aws-rds';
 import * as lambda from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as logs from 'aws-cdk-lib/aws-logs';
+import { Tracing } from 'aws-cdk-lib/aws-lambda';
+import * as waf from 'aws-cdk-lib/aws-wafv2';
 export class AnycityTransportationApiStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
@@ -19,6 +21,9 @@ export class AnycityTransportationApiStack extends Stack {
       vpc,
       enableDataApi: true,
       defaultDatabaseName,
+      scaling: {
+        autoPause: Duration.days(1),
+      }
     });
 
     // Lambda Functions
@@ -31,11 +36,13 @@ export class AnycityTransportationApiStack extends Stack {
     const busFunction = new lambda.NodejsFunction(this, 'bus', {
       environment,
       timeout: Duration.minutes(1),
+      tracing: Tracing.ACTIVE
     });
 
     const subwayFunction = new lambda.NodejsFunction(this, 'subway', {
       environment,
       timeout: Duration.minutes(1),
+      tracing: Tracing.ACTIVE
     });
 
     // Grant RDS Access to Lambda functions
@@ -47,7 +54,10 @@ export class AnycityTransportationApiStack extends Stack {
     const api = new apigateway.RestApi(this, 'api', {
       deployOptions: {
         accessLogDestination: new apigateway.LogGroupLogDestination(prdLogGroup),
-        accessLogFormat: apigateway.AccessLogFormat.jsonWithStandardFields()
+        accessLogFormat: apigateway.AccessLogFormat.jsonWithStandardFields(),
+        cachingEnabled: true,
+        metricsEnabled: true,
+        tracingEnabled: true,
       }
     });
 
@@ -73,6 +83,51 @@ export class AnycityTransportationApiStack extends Stack {
     const subwayResource = api.root.addResource('subway');
     subwayResource.addMethod('GET', new apigateway.LambdaIntegration(subwayFunction), {
       apiKeyRequired: true
+    });
+
+    //Setup WAF Rules
+
+    let wafRules:Array<waf.CfnWebACL.RuleProperty>  = [];
+
+    // 1 AWS Managed Rules
+    let awsManagedRules:waf.CfnWebACL.RuleProperty  = {
+      name: 'AWS-AWSManagedRulesCommonRuleSet',
+      priority: 1,
+      overrideAction: {none: {}},
+      statement: {
+        managedRuleGroupStatement: {
+          name: 'AWSManagedRulesCommonRuleSet',
+          vendorName: 'AWS',
+          excludedRules: [{name: 'SizeRestrictions_BODY'}]
+        }
+      },
+      visibilityConfig: {
+        cloudWatchMetricsEnabled: true,
+        metricName: 'awsCommonRules',
+        sampledRequestsEnabled: true
+      }
+    };
+
+    wafRules.push(awsManagedRules);
+
+    // Create our Web ACL
+    let webACL = new waf.CfnWebACL(this, 'WebACL', {
+      defaultAction: {
+        allow: {}
+      },
+      scope: 'REGIONAL',
+      visibilityConfig: {
+        cloudWatchMetricsEnabled: true,
+        metricName: 'webACL',
+        sampledRequestsEnabled: true,
+      },
+      rules: wafRules
+    });
+
+    // Associate with our gateway
+    new waf.CfnWebACLAssociation(this, 'WebACLAssociation', {
+      webAclArn: webACL.attrArn,
+      resourceArn: `arn:aws:apigateway:${Stack.of(this).region}::/restapis/${api.restApiId}/stages/${api.deploymentStage.stageName}`
     });
   }
 }
