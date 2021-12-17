@@ -23,15 +23,13 @@ exports.handler = async function(event, context) {
   }
   
   if (method === "GET") {
-    if (event.path === "/subway") {
-      params.sql = 'select * from vehicles where vehicle_type = "subway"';
+    if (event.path.includes("/bus/schedules/")) {
+      params.sql = 'select v.*, s.stop_time, s.stop from vehicles v right join schedules s on v.id = s.vehicle_id where v.id ='+event.queryStringParameters.id;
       const response = await rdsdataservice.executeStatement(params).promise();
       
       return {
         statusCode: 200,
-        headers: {
-            "Access-Control-Allow-Origin": "*"
-        },
+        headers: {},
         body: JSON.stringify(parseDataServiceResponse(response)),
         isBase64Encoded:false
       };

@@ -45,9 +45,23 @@ export class AnycityTransportationApiStack extends Stack {
       tracing: Tracing.ACTIVE
     });
 
+    const busScheduleFunction = new lambda.NodejsFunction(this, 'bus-schedule-id', {
+      environment,
+      timeout: Duration.minutes(1),
+      tracing: Tracing.ACTIVE
+    });
+
+    const subwaySchduleFunction = new lambda.NodejsFunction(this, 'subway-schedule', {
+      environment,
+      timeout: Duration.minutes(1),
+      tracing: Tracing.ACTIVE
+    });
+
     // Grant RDS Access to Lambda functions
     rdsDatabase.grantDataApiAccess(busFunction);
     rdsDatabase.grantDataApiAccess(subwayFunction);
+    rdsDatabase.grantDataApiAccess(busScheduleFunction);
+    rdsDatabase.grantDataApiAccess(subwaySchduleFunction);
   
     // API Gateway
     const prdLogGroup = new logs.LogGroup(this, "PrdLogs");
@@ -80,8 +94,18 @@ export class AnycityTransportationApiStack extends Stack {
       apiKeyRequired: true
     });
 
+    const busScheduleResource = busResource.addResource('schedules').addResource('{id}');
+    busScheduleResource.addMethod('GET', new apigateway.LambdaIntegration(busScheduleFunction), {
+      apiKeyRequired: true
+    });
+
     const subwayResource = api.root.addResource('subway');
     subwayResource.addMethod('GET', new apigateway.LambdaIntegration(subwayFunction), {
+      apiKeyRequired: true
+    });
+
+    const subwayScheduleResource = subwayResource.addResource('schedules');
+    subwayScheduleResource.addMethod('GET', new apigateway.LambdaIntegration(subwaySchduleFunction), {
       apiKeyRequired: true
     });
 
